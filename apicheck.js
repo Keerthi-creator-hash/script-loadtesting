@@ -1,179 +1,306 @@
 const axios = require("axios");
-const faker = require("faker");
+const jwt = require("jsonwebtoken");
 
-const API_BASE = "http://localhost:3000"; 
-const TOTAL_TEACHERS = 200;
-const TOTAL_STUDENTS = 10000;
+// 🌐 API base URL
+const API_BASE = "https://zkbsgdbbhc.execute-api.us-east-1.amazonaws.com/Dev";
 
-const SPECIAL_TEACHER_ID = 1;
-const SPECIAL_TEACHER_STUDENTS = 100;
-const SPECIAL_TEACHER_BATCHES = 20;
+// 🔢 CONFIGURATION (VERY SMALL TEST MODE)
+const TOTAL_TEACHERS = 2;
+const TOTAL_STUDENTS = 10;
 
-const SPECIAL_ASSIGNMENTS = 1000;
-const SPECIAL_NOTES = 1000;
-const SPECIAL_MESSAGES = 10000;
+const SPECIAL_TEACHER_USERNAME = "teacherA1";
+const SPECIAL_TEACHER_STUDENTS = 3;
+const SPECIAL_TEACHER_BATCHES = 1;
 
+const TOTAL_ACTIVE_BATCHES = 3; // teacher-linked
+const TOTAL_NULL_BATCHES = 1;   // unassigned
+const TOTAL_BATCHES = TOTAL_ACTIVE_BATCHES + TOTAL_NULL_BATCHES;
+
+const SPECIAL_ASSIGNMENTS = 2;
+const SPECIAL_NOTES = 2;
+const SPECIAL_MESSAGES = 2;
+
+// 🔢 Students per batch (auto)
+const STUDENTS_PER_BATCH = Math.ceil(TOTAL_STUDENTS / TOTAL_ACTIVE_BATCHES); // ≈ 4
+
+// 🕐 Utility Delay
 async function delay(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-// Helper to safely post
-async function safePost(url, data, label) {
-  try {
-    const res = await axios.post(`${API_BASE}${url}`, data);
-    console.log(` Created ${label}`);
-    return res.data;
-  } catch (err) {
-    console.log(`Failed ${label}: ${err.response?.status} ${err.response?.data?.message || err.message}`);
+// 🛡 Safe POST with retry + error logging
+async function safePost(url, data, label, token = null, retries = 3) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await axios.post(`${API_BASE}${url}`, data, { headers });
+      console.log(`✅ Created ${label}`);
+      return res.data;
+    } catch (err) {
+      const code = err.response?.status || "Unknown";
+      const msg = err.response?.data?.error || err.message;
+      console.log(`❌ Failed ${label} (attempt ${attempt}/${retries}): ${code} ${msg}`);
+      if (attempt < retries) await delay(500 * attempt);
+      else if (err.response?.data)
+        console.log("Error details:", JSON.stringify(err.response.data, null, 2));
+    }
   }
 }
 
-// ---------- TEACHERS ----------
+// ---------- CREATE TEACHERS ----------
 async function createTeachers() {
   const teachers = [];
+
   for (let i = 1; i <= TOTAL_TEACHERS; i++) {
-    const data = {
-      firstName: faker.name.firstName(),
-      lastName: faker.name.lastName(),
-      userName: `teacher${i}`,
+    const signupData = {
+      firstName: `Teacher${i}`,
+      lastName: "Test",
+      userName: `teacherA${i}`,
       password: `Password@${i}`,
-      email: `teacher${i}@tasmai.test`,
-      phoneNumber: faker.phone.phoneNumber("9#########"),
+      age: 30 + (i % 10),
+      gender: i % 2 === 0 ? "male" : "female",
+      addressLine1: `Address ${i}`,
+      addressCity: "CityX",
+      addressState: "StateY",
+      pinCode: `5600${i}`,
+      profilePicUrl: "https://example.com/profile.jpg",
+      email: `teacher${i}@tasmai.com`,
+      phoneNumber: `90000000${i}`.slice(-10),
+      upiId: `teacher${i}@upi`,
+      accountNumber: `1234567890${i}`,
+      accountName: `Teacher${i} Test`,
+      ifscCode: `IFSC000${i.toString().padStart(3, "0")}`,
     };
-    const t = await safePost("/teachers", data, `Teacher ${i}`);
-    if (t) teachers.push(t);
-    await delay(100); // to avoid overloading your API
+
+    const res = await safePost("/signup/teachers", signupData, `Teacher ${i}`);
+    if (!res?.token) continue;
+
+    const decoded = jwt.decode(res.token) || {};
+    teachers.push({ ...signupData, id: decoded.id || decoded._id || i, token: res.token });
   }
+
+  console.log(`\n👩‍🏫 Created ${teachers.length} teacher(s)\n`);
   return teachers;
 }
 
-// ---------- STUDENTS ----------
+// ---------- CREATE STUDENTS ----------
 async function createStudents(teachers) {
   const students = [];
   let studentId = 1;
 
-  // Teacher 1 -> 100 students
-  const specialTeacher = teachers.find(t => t.userName === "teacher1");
-  for (let i = 0; i < SPECIAL_TEACHER_STUDENTS; i++) {
-    const s = await safePost("/students", {
-      firstName: faker.name.firstName(),
-      lastName: faker.name.lastName(),
-      userName: `student${studentId}`,
-      password: `Password@${studentId}`,
-      email: `student${studentId}@tasmai.test`,
-      teacherId: specialTeacher.id
-    }, `Student ${studentId}`);
-    students.push(s);
-    studentId++;
+  const specialTeacher = teachers.find((t) => t.userName === SPECIAL_TEACHER_USERNAME);
+  if (!specialTeacher) {
+    console.log("❌ Special teacher not found!");
+    return students;
   }
 
-  // Other teachers get remaining students
+  async function createStudentBatch(teacher, count) {
+    const created = [];
+    for (let i = 0; i < count; i++) {
+      const uname = `student${studentId}${teacher.userName}`;
+      const sData = {
+        firstName: `Student${studentId}`,
+        lastName: teacher.userName,
+        userName: uname,
+        password: `Password@${studentId}`,
+        email: `${uname}@tasmai.com`,
+        age: 10 + (studentId % 10),
+        gender: studentId % 2 === 0 ? "male" : "female",
+        addressLine1: `Address ${studentId}`,
+        addressCity: "CityZ",
+        addressState: "StateW",
+        pinCode: `4000${studentId % 100}`,
+        profilePicUrl: "https://example.com/student.jpg",
+        parent1Name: `Parent${studentId}`,
+        parent1Phone: `99900${studentId.toString().padStart(5, "0")}`.slice(-10),
+        parent1Email: `parent${studentId}@tasmai.com`,
+        parent2Name: `ParentTwo${studentId}`,
+        parent2Phone: `88800${studentId.toString().padStart(5, "0")}`.slice(-10),
+        parent2Email: `parent2_${studentId}@tasmai.com`,
+      };
+
+      const s = await safePost("/signup/students", sData, `Student ${studentId}`, teacher.token);
+      if (s?.token) {
+        const decoded = jwt.decode(s.token) || {};
+        created.push({
+          ...sData,
+          id: decoded.id || decoded._id || `S${studentId}`,
+          teacherId: teacher.id,
+          token: s.token,
+        });
+      }
+
+      studentId++;
+      await delay(100);
+    }
+    return created;
+  }
+
+  // Special teacher gets 3 students
+  students.push(...(await createStudentBatch(specialTeacher, SPECIAL_TEACHER_STUDENTS)));
+
+  // Remaining teachers share the rest
   const remaining = TOTAL_STUDENTS - SPECIAL_TEACHER_STUDENTS;
   const perTeacher = Math.floor(remaining / (teachers.length - 1));
-  for (let t of teachers.filter(x => x.id !== specialTeacher.id)) {
-    for (let i = 0; i < perTeacher; i++) {
-      const s = await safePost("/students", {
-        firstName: faker.name.firstName(),
-        lastName: faker.name.lastName(),
-        userName: `student${studentId}`,
-        password: `Password@${studentId}`,
-        email: `student${studentId}@tasmai.test`,
-        teacherId: t.id
-      }, `Student ${studentId}`);
-      students.push(s);
-      studentId++;
-    }
+
+  for (const t of teachers.filter((x) => x.userName !== SPECIAL_TEACHER_USERNAME)) {
+    students.push(...(await createStudentBatch(t, perTeacher)));
   }
+
+  console.log(`\n👨‍🎓 Created ${students.length} student(s)\n`);
   return students;
 }
 
-// ---------- BATCHES ----------
-async function createBatches(teachers, students) {
+// ---------- CREATE BATCHES ----------
+async function createBatches(teachers) {
   const batches = [];
+  let batchCounter = 1;
 
-  // Special teacher
-  const t1 = teachers.find(t => t.userName === "teacher1");
-  const t1Students = students.filter(s => s.teacherId === t1.id);
-  for (let i = 1; i <= SPECIAL_TEACHER_BATCHES; i++) {
-    const members = i <= 10
-      ? t1Students.slice((i - 1) * 5, i * 5).map(s => s.id)
-      : null;
-    const b = await safePost("/batches", {
-      teacherId: t1.id,
-      name: `Batch ${i} (T1)`,
-      members
-    }, `Batch ${i} (Teacher 1)`);
-    batches.push(b);
-  }
+  for (const t of teachers) {
+    const numBatches =
+      t.userName === SPECIAL_TEACHER_USERNAME
+        ? SPECIAL_TEACHER_BATCHES
+        : batches.length < TOTAL_ACTIVE_BATCHES
+        ? 1
+        : 0;
 
-  // Other teachers
-  for (let t of teachers.filter(x => x.id !== t1.id)) {
-    const teacherStudents = students.filter(s => s.teacherId === t.id);
-    for (let i = 1; i <= 50; i++) {
-      const rnd = Math.random();
-      let members = null;
-      if (rnd < 0.3) members = teacherStudents.slice(0, 10).map(s => s.id);
-      else if (rnd < 0.6) members = [];
-      else members = null;
-      const b = await safePost("/batches", {
+    for (let i = 1; i <= numBatches; i++) {
+      const bData = {
+        name: `Batch ${batchCounter} (${t.userName})`,
+        course: "General Studies",
+        subject: "Mathematics",
+        description: "Auto-created batch",
+        paymentFrequency: "Monthly",
+        paymentAmount: 1000,
         teacherId: t.id,
-        name: `Batch ${i} (${t.userName})`,
-        members
-      }, `Batch ${i} (${t.userName})`);
-      batches.push(b);
+      };
+
+      const b = await safePost("/batches", bData, `Batch ${batchCounter}`, t.token);
+      if (b) batches.push({ ...b, teacherId: t.id });
+      batchCounter++;
     }
   }
 
+  // Add null batch(es)
+  for (let i = 1; i <= TOTAL_NULL_BATCHES; i++) {
+    batches.push({
+      id: `null-batch-${i}`,
+      name: `Unassigned Batch ${batches.length + 1}`,
+      teacherId: null,
+    });
+  }
+
+  console.log(`\n📚 Created ${batches.length} total batches`);
+  console.log(`🧮 ${TOTAL_ACTIVE_BATCHES} active, ${TOTAL_NULL_BATCHES} null\n`);
   return batches;
 }
 
-// ---------- Assignments / Notes / Messages ----------
+// ---------- ASSIGN STUDENTS TO BATCHES ----------
+function assignStudentsToBatches(students, batches) {
+  const summary = {};
+  const validBatches = batches.filter(b => b.teacherId);
+
+  for (const s of students) {
+    const teacherBatches = validBatches.filter(b => b.teacherId === s.teacherId);
+    if (teacherBatches.length > 0) {
+      const assignedBatch = teacherBatches[Math.floor(Math.random() * teacherBatches.length)];
+      s.batchId = assignedBatch.id;
+      summary[assignedBatch.name] = (summary[assignedBatch.name] || 0) + 1;
+    } else {
+      s.batchId = null;
+      summary["Unassigned"] = (summary["Unassigned"] || 0) + 1;
+    }
+  }
+
+  console.log("\n📊 Student-to-Batch Assignment Summary:");
+  for (const [batch, count] of Object.entries(summary)) {
+    console.log(`- ${batch}: ${count} student(s)`);
+  }
+
+  return students;
+}
+
+// ---------- HEAVY DATA ----------
 async function createHeavyData(teacher, students, batches) {
-  console.log("\nCreating heavy data for Teacher 1...");
+  console.log("\n📦 Creating heavy data (assignments, notes, messages)...");
 
   for (let i = 1; i <= SPECIAL_ASSIGNMENTS; i++) {
-    await safePost("/assignments", {
-      teacherId: teacher.id,
-      batchId: faker.random.arrayElement(batches).id,
-      title: `Assignment ${i}`,
-      details: `Auto-generated assignment ${i}`
-    }, `Assignment ${i}`);
+    await safePost(
+      "/assignments",
+      {
+        publishDate: new Date().toISOString(),
+        submissionDate: new Date(Date.now() + 7 * 86400000).toISOString(),
+        batchId: batches[i % batches.length]?.id || "unknown",
+        studentId: students[i % students.length]?.id,
+        title: `Assignment ${i}`,
+        details: `Auto assignment ${i}`,
+        attachmentUrls: [`https://example.com/assignment${i}.pdf`],
+      },
+      `Assignment ${i}`,
+      teacher.token
+    );
   }
 
   for (let i = 1; i <= SPECIAL_NOTES; i++) {
-    await safePost("/notes", {
-      teacherId: teacher.id,
-      batchId: faker.random.arrayElement(batches).id,
-      title: `Note ${i}`,
-      content: `Auto note ${i}`
-    }, `Note ${i}`);
+    await safePost(
+      "/notes",
+      {
+        publishDate: new Date().toISOString(),
+        Title: `Note ${i}`,
+        listUrls: [`https://example.com/note${i}.pdf`],
+        content: `Auto note ${i}`,
+        studentId: students[i % students.length]?.id,
+        batchId: batches[i % batches.length]?.id || "unknown",
+      },
+      `Note ${i}`,
+      teacher.token
+    );
   }
 
   for (let i = 1; i <= SPECIAL_MESSAGES; i++) {
-    const student = faker.random.arrayElement(students);
-    await safePost("/messages", {
-      senderId: teacher.id,
-      receiverId: student.id,
-      content: `Message ${i} from teacher`
-    }, `Message ${i}`);
+    const student = students[i % students.length];
+    await safePost(
+      "/messages",
+      {
+        subject: `Follow Up ${i}`,
+        content: `Message ${i} from ${teacher.userName}`,
+        sender: teacher.id,
+        senderName: teacher.userName,
+        senderType: "TEACHER",
+        receiverName: student.userName,
+        receiverType: "STUDENT",
+        receiver: student.id,
+        batchId: batches[i % batches.length]?.id || "unknown",
+        timestamp: new Date().toISOString(),
+        attachmentUrls: ["http://example.com/attachment1.pdf"],
+      },
+      `Message ${i}`,
+      teacher.token
+    );
   }
 
-  console.log(" Heavy data created for Teacher 1");
+  console.log("✅ Heavy data generation completed!");
 }
 
 // ---------- MAIN ----------
 (async function main() {
-  console.log(" Starting API data generation...");
+  console.log("🚀 Starting VERY SMALL TEST MODE data generation...");
 
   const teachers = await createTeachers();
+  if (!teachers.length) return console.log("❌ No teachers created.");
+
   const students = await createStudents(teachers);
-  const batches = await createBatches(teachers, students);
+  const batches = await createBatches(teachers);
 
-  const t1 = teachers.find(t => t.userName === "teacher1");
-  const t1Students = students.filter(s => s.teacherId === t1.id);
-  const t1Batches = batches.filter(b => b && b.teacherId === t1.id);
+  assignStudentsToBatches(students, batches);
 
-  await createHeavyData(t1, t1Students, t1Batches);
+  const specialTeacher = teachers.find(t => t.userName === SPECIAL_TEACHER_USERNAME);
+  const specialStudents = students.filter(s => s.teacherId === specialTeacher.id);
+  const specialBatches = batches.filter(b => b.teacherId === specialTeacher.id);
 
-  console.log("\n🎉 Data generation via API completed successfully!");
+  await createHeavyData(specialTeacher, specialStudents, specialBatches);
+
+  console.log("\n✅ VERY SMALL TEST MODE data generation completed successfully!");
 })();
