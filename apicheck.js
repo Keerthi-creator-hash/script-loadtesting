@@ -4,31 +4,28 @@ const jwt = require("jsonwebtoken");
 // 🌐 API base URL
 const API_BASE = "https://zkbsgdbbhc.execute-api.us-east-1.amazonaws.com/Dev";
 
-// 🔢 CONFIGURATION (VERY SMALL TEST MODE)
+// 🔢 CONFIGURATION
 const TOTAL_TEACHERS = 2;
 const TOTAL_STUDENTS = 10;
 
-const SPECIAL_TEACHER_USERNAME = "teacherA1";
+const SPECIAL_TEACHER_USERNAME = "teacherAA1";
 const SPECIAL_TEACHER_STUDENTS = 3;
 const SPECIAL_TEACHER_BATCHES = 1;
 
-const TOTAL_ACTIVE_BATCHES = 3; // teacher-linked
-const TOTAL_NULL_BATCHES = 1;   // unassigned
+const TOTAL_ACTIVE_BATCHES = 3;
+const TOTAL_NULL_BATCHES = 1;
 const TOTAL_BATCHES = TOTAL_ACTIVE_BATCHES + TOTAL_NULL_BATCHES;
 
 const SPECIAL_ASSIGNMENTS = 2;
 const SPECIAL_NOTES = 2;
 const SPECIAL_MESSAGES = 2;
 
-// 🔢 Students per batch (auto)
-const STUDENTS_PER_BATCH = Math.ceil(TOTAL_STUDENTS / TOTAL_ACTIVE_BATCHES); // ≈ 4
-
 // 🕐 Utility Delay
 async function delay(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-// 🛡 Safe POST with retry + error logging
+// 🛡 Safe POST with retry
 async function safePost(url, data, label, token = null, retries = 3) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -43,8 +40,6 @@ async function safePost(url, data, label, token = null, retries = 3) {
       const msg = err.response?.data?.error || err.message;
       console.log(`❌ Failed ${label} (attempt ${attempt}/${retries}): ${code} ${msg}`);
       if (attempt < retries) await delay(500 * attempt);
-      else if (err.response?.data)
-        console.log("Error details:", JSON.stringify(err.response.data, null, 2));
     }
   }
 }
@@ -57,10 +52,10 @@ async function createTeachers() {
     const signupData = {
       firstName: `Teacher${i}`,
       lastName: "Test",
-      userName: `teacherA${i}`,
+      userName: `teacherAA${i}`,
       password: `Password@${i}`,
       age: 30 + (i % 10),
-  gender: i % 2 === 0 ? "male" : "female",
+      gender: i % 2 === 0 ? "male" : "female",
       addressLine1: `Address ${i}`,
       addressCity: "CityX",
       addressState: "StateY",
@@ -99,7 +94,7 @@ async function createStudents(teachers) {
   async function createStudentBatch(teacher, count) {
     const created = [];
     for (let i = 0; i < count; i++) {
-      const uname = `student${studentId}${teacher.userName}`;
+      const uname = `studentA${studentId}${teacher.userName}`;
       const sData = {
         firstName: `Student${studentId}`,
         lastName: teacher.userName,
@@ -107,7 +102,7 @@ async function createStudents(teachers) {
         password: `Password@${studentId}`,
         email: `${uname}@tasmai.com`,
         age: 10 + (studentId % 10),
-  gender: studentId % 2 === 0 ? "male" : "female",
+        gender: studentId % 2 === 0 ? "male" : "female",
         addressLine1: `Address ${studentId}`,
         addressCity: "CityZ",
         addressState: "StateW",
@@ -138,10 +133,8 @@ async function createStudents(teachers) {
     return created;
   }
 
-  // Special teacher gets 3 students
   students.push(...(await createStudentBatch(specialTeacher, SPECIAL_TEACHER_STUDENTS)));
 
-  // Remaining teachers share the rest
   const remaining = TOTAL_STUDENTS - SPECIAL_TEACHER_STUDENTS;
   const perTeacher = Math.floor(remaining / (teachers.length - 1));
 
@@ -183,7 +176,6 @@ async function createBatches(teachers) {
     }
   }
 
-  // Add null batch(es)
   for (let i = 1; i <= TOTAL_NULL_BATCHES; i++) {
     batches.push({
       id: `null-batch-${i}`,
@@ -193,17 +185,16 @@ async function createBatches(teachers) {
   }
 
   console.log(`\n📚 Created ${batches.length} total batches`);
-  console.log(`🧮 ${TOTAL_ACTIVE_BATCHES} active, ${TOTAL_NULL_BATCHES} null\n`);
   return batches;
 }
 
 // ---------- ASSIGN STUDENTS TO BATCHES ----------
 function assignStudentsToBatches(students, batches) {
   const summary = {};
-  const validBatches = batches.filter(b => b.teacherId);
+  const validBatches = batches.filter((b) => b.teacherId);
 
   for (const s of students) {
-    const teacherBatches = validBatches.filter(b => b.teacherId === s.teacherId);
+    const teacherBatches = validBatches.filter((b) => b.teacherId === s.teacherId);
     if (teacherBatches.length > 0) {
       const assignedBatch = teacherBatches[Math.floor(Math.random() * teacherBatches.length)];
       s.batchId = assignedBatch.id;
@@ -220,6 +211,40 @@ function assignStudentsToBatches(students, batches) {
   }
 
   return students;
+}
+
+// 🆕 ---------- UPDATE STUDENT BATCH IN DATABASE ----------
+async function updateStudentBatchAssignments(students, teachers) {
+  console.log("\n🔄 Updating students with batch assignments...");
+
+  for (const s of students) {
+    if (!s.batchId) continue;
+
+    const teacher = teachers.find((t) => t.id === s.teacherId);
+    if (!teacher) continue;
+
+    const updateData = {
+      batches: [s.batchId],
+    };
+
+    try {
+      await axios.put(`${API_BASE}/students/${s.id}`, updateData, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${teacher.token}`, // use teacher token
+        },
+      });
+      console.log(`✅ Updated ${s.userName} -> batch ${s.batchId}`);
+    } catch (err) {
+      const code = err.response?.status || "Unknown";
+      const msg = err.response?.data?.error || err.message;
+      console.log(`❌ Failed to update ${s.userName}: ${code} ${msg}`);
+    }
+
+    await delay(100);
+  }
+
+  console.log("\n✅ All students batch updates completed!");
 }
 
 // ---------- HEAVY DATA ----------
@@ -294,11 +319,14 @@ async function createHeavyData(teacher, students, batches) {
   const students = await createStudents(teachers);
   const batches = await createBatches(teachers);
 
-  assignStudentsToBatches(students, batches);
+  const assignedStudents = assignStudentsToBatches(students, batches);
 
-  const specialTeacher = teachers.find(t => t.userName === SPECIAL_TEACHER_USERNAME);
-  const specialStudents = students.filter(s => s.teacherId === specialTeacher.id);
-  const specialBatches = batches.filter(b => b.teacherId === specialTeacher.id);
+  // 🆕 Update student records in DB
+  await updateStudentBatchAssignments(assignedStudents, teachers);
+
+  const specialTeacher = teachers.find((t) => t.userName === SPECIAL_TEACHER_USERNAME);
+  const specialStudents = students.filter((s) => s.teacherId === specialTeacher.id);
+  const specialBatches = batches.filter((b) => b.teacherId === specialTeacher.id);
 
   await createHeavyData(specialTeacher, specialStudents, specialBatches);
 
