@@ -1,8 +1,6 @@
 name: Cleanup Old Pull Requests and Branches
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -14,8 +12,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Close PRs older than 5 minutes and delete branches
+      - name: Close old PRs and delete branches
         uses: actions/github-script@v7
+        env:
+          PR_CUTOFF_MINUTES: ${{ vars.PR_CUTOFF_MINUTES }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -23,8 +23,10 @@ jobs:
             const repo = context.repo.repo;
 
             const protectedBranches = ['main', 'master', 'develop'];
+
+            const cutoffMinutes = parseInt(process.env.PR_CUTOFF_MINUTES || '5', 10);
             const cutoffTime = new Date();
-            cutoffTime.setMinutes(cutoffTime.getMinutes() - 5);
+            cutoffTime.setMinutes(cutoffTime.getMinutes() - cutoffMinutes);
 
             const protected = new Set(protectedBranches);
 
@@ -61,6 +63,7 @@ jobs:
               }
 
               console.log(`Closing PR #${pr.number}`);
+
               await github.rest.pulls.update({
                 owner,
                 repo,
@@ -89,6 +92,7 @@ jobs:
                 }
 
                 console.log(`Deleting branch: ${headBranch}`);
+
                 await github.rest.git.deleteRef({
                   owner,
                   repo,
