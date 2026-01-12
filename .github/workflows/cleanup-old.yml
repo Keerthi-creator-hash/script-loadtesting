@@ -15,7 +15,7 @@ jobs:
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
-          PR_CUTOFF_MINUTES: ${{ vars.PR_CUTOFF_MINUTES }}
+          PR_CUTOFF_DAYS: ${{ vars.PR_CUTOFF_DAYS }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -24,9 +24,9 @@ jobs:
 
             const protectedBranches = ['main', 'master', 'develop'];
 
-            const cutoffMinutes = parseInt(process.env.PR_CUTOFF_MINUTES || '5', 10);
+            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS || '90', 10);
             const cutoffTime = new Date();
-            cutoffTime.setMinutes(cutoffTime.getMinutes() - cutoffMinutes);
+            cutoffTime.setDate(cutoffTime.getDate() - cutoffDays);
 
             const protected = new Set(protectedBranches);
 
