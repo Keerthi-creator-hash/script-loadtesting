@@ -6,7 +6,7 @@ const API_BASE = "https://zkbsgdbbhc.execute-api.us-east-1.amazonaws.com/Dev";
 
 // 🔢 CONFIGURATION
 const TOTAL_TEACHERS = 2;
-const TOTAL_STUDENTS = 10;
+const TOTAL_STUDENTS = 100;
 
 const SPECIAL_TEACHER_USERNAME = "teacherAA1";
 const SPECIAL_TEACHER_STUDENTS = 3;
