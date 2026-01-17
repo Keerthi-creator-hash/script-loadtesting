@@ -1,10 +1,9 @@
 name: Cleanup Old Pull Requests and Branches
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
-    - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
-
+    - cron: '*/15 * * * *' 
 permissions:
   contents: write
   pull-requests: write
@@ -26,7 +25,7 @@ jobs:
 
             const protectedBranches = ['main', 'master', 'develop'];
 
-            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS || '90', 10);
+            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS || '5', 10);
             const cutoffTime = new Date();
             cutoffTime.setDate(cutoffTime.getDate() - cutoffDays);
 
