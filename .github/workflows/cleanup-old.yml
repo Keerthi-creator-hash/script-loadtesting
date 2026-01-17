@@ -136,4 +136,4 @@ jobs:
               }
             }
 
-            console.log('✅ Cleanup job completed');
+            console.log(' Cleanup job completed');
