@@ -26,14 +26,14 @@ jobs:
       - name: Scheduled run info
         if: github.event_name == 'schedule'
         run: |
-          echo "⏰ Scheduled cleanup run (Sunday)"
+          echo " Scheduled cleanup run (Sunday)"
           echo "Time (UTC): $(date -u)"
 
       # Log manual runs
       - name: Manual run info
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "▶️ Manual cleanup run"
+          echo " Manual cleanup run"
           echo "Cutoff days: ${{ github.event.inputs.cutoffDays }}"
 
       # Cleanup logic (runs for BOTH triggers)
@@ -44,7 +44,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            console.log('🧹 Cleanup job started at:', new Date().toISOString());
+            console.log(' Cleanup job started at:', new Date().toISOString());
             console.log('Trigger:', context.eventName);
 
             const owner = context.repo.owner;
@@ -67,7 +67,7 @@ jobs:
               );
               protections.forEach(b => protectedSet.add(b.name));
             } catch {
-              console.log('⚠️ Could not fetch protected branches');
+              console.log(' Could not fetch protected branches');
             }
 
             const prs = await github.paginate(
@@ -132,7 +132,7 @@ jobs:
                   ref: `heads/${headBranch}`,
                 });
               } catch (err) {
-                console.log(`⚠️ Could not delete branch ${headBranch}: ${err.message}`);
+                console.log(` Could not delete branch ${headBranch}: ${err.message}`);
               }
             }
 
