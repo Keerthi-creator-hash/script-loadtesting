@@ -1,9 +1,17 @@
 name: Cleanup Old Pull Requests and Branches
 
 on:
-  workflow_dispatch:
+  # Scheduled trigger: Every Sunday at 00:00 UTC
   schedule:
-    - cron: '0 0 * * 0' # Every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      cutoffDays:
+        description: 'PR & branch cutoff age in days'
+        required: true
+        default: '90'
 
 permissions:
   contents: write
@@ -14,32 +22,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Log scheduled runs
+      - name: Scheduled run info
+        if: github.event_name == 'schedule'
+        run: |
+          echo "⏰ Scheduled cleanup run (Sunday)"
+          echo "Time (UTC): $(date -u)"
+
+      # Log manual runs
+      - name: Manual run info
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "▶️ Manual cleanup run"
+          echo "Cutoff days: ${{ github.event.inputs.cutoffDays }}"
+
+      # Cleanup logic (runs for BOTH triggers)
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
-          PR_CUTOFF_DAYS: ${{ vars.PR_CUTOFF_DAYS }}
+          PR_CUTOFF_DAYS: ${{ github.event.inputs.cutoffDays || vars.PR_CUTOFF_DAYS || '90' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            console.log('🧹 Cleanup job started at:', new Date().toISOString());
+            console.log('Trigger:', context.eventName);
+
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
             const protectedBranches = ['main', 'master', 'develop'];
 
-            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS || '90', 10);
+            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS, 10);
             const cutoffTime = new Date();
             cutoffTime.setDate(cutoffTime.getDate() - cutoffDays);
 
-            const protected = new Set(protectedBranches);
+            console.log(`Using cutoff time: ${cutoffTime.toISOString()}`);
+
+            const protectedSet = new Set(protectedBranches);
 
             try {
               const protections = await github.paginate(
                 github.rest.repos.listBranches,
                 { owner, repo, protected: true }
               );
-              protections.forEach(b => protected.add(b.name));
-            } catch (e) {
-              console.log('Could not fetch protected branches');
+              protections.forEach(b => protectedSet.add(b.name));
+            } catch {
+              console.log('⚠️ Could not fetch protected branches');
             }
 
             const prs = await github.paginate(
@@ -51,6 +79,8 @@ jobs:
                 per_page: 100,
               }
             );
+
+            console.log(`Found ${prs.length} open PRs`);
 
             for (const pr of prs) {
               const createdAt = new Date(pr.created_at);
@@ -73,7 +103,7 @@ jobs:
                 state: 'closed',
               });
 
-              if (protected.has(headBranch)) {
+              if (protectedSet.has(headBranch)) {
                 console.log(`Skipping protected branch: ${headBranch}`);
                 continue;
               }
@@ -90,6 +120,7 @@ jobs:
                 );
 
                 if (lastCommitDate > cutoffTime) {
+                  console.log(`Skipping active branch: ${headBranch}`);
                   continue;
                 }
 
@@ -101,6 +132,8 @@ jobs:
                   ref: `heads/${headBranch}`,
                 });
               } catch (err) {
-                console.log(`Could not delete branch ${headBranch}: ${err.message}`);
+                console.log(`⚠️ Could not delete branch ${headBranch}: ${err.message}`);
               }
             }
+
+            console.log('✅ Cleanup job completed');
