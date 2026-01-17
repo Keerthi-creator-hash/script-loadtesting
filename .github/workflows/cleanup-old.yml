@@ -1,7 +1,6 @@
 name: Cleanup Old Pull Requests and Branches
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: '*/5 * * * *' # Every Sunday at 00:00 UTC
 
