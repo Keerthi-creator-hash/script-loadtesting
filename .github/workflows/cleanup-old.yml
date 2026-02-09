@@ -11,7 +11,7 @@ on:
       cutoffDays:
         description: 'PR & branch cutoff age in days'
         required: false
-        default: '90'
+        default: '180'
 
 permissions:
   contents: write
@@ -37,7 +37,7 @@ jobs:
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
-          PR_CUTOFF_DAYS: ${{ github.event.inputs.cutoffDays || '90' }}
+          PR_CUTOFF_DAYS: ${{ github.event.inputs.cutoffDays || '180' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
