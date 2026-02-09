@@ -3,13 +3,13 @@ name: Cleanup Old Pull Requests and Branches
 on:
   # Scheduled trigger: Every Sunday at 00:00 UTC
   schedule:
-    - cron: '0 0 * * 0'
+  - cron: '*/5 * * * *' 
 
   # Manual trigger
   workflow_dispatch:
     inputs:
-      cutoffDays:
-        description: 'PR & branch cutoff age in days'
+      cutoffMinutes:
+        description: 'PR & branch cutoff age in minutes'
         required: true
         default: '5'
 
@@ -32,12 +32,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Manual cleanup run"
-          echo "Cutoff days: ${{ github.event.inputs.cutoffDays }}"
+          echo "Cutoff minutes: ${{ github.event.inputs.cutoffMinutes }}"
 
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
-          PR_CUTOFF_DAYS: ${{ github.event.inputs.cutoffDays || vars.PR_CUTOFF_DAYS || '5' }}
+          PR_CUTOFF_MINUTES: ${{ github.event.inputs.cutoffMinutes || vars.PR_CUTOFF_MINUTES || '5' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -46,9 +46,9 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS, 10);
+            const cutoffMinutes = parseInt(process.env.PR_CUTOFF_MINUTES, 10);
             const cutoffTime = new Date();
-            cutoffTime.setDate(cutoffTime.getDate() - cutoffDays);
+            cutoffTime.setMinutes(cutoffTime.getMinutes() - cutoffMinutes);
 
             console.log(`Using cutoff time: ${cutoffTime.toISOString()}`);
 
@@ -75,128 +75,11 @@ jobs:
             // ===== Fetch open PRs =====
             const prs = await github.paginate(
               github.rest.pulls.list,
-              {
-                owner,
-                repo,
-                state: 'open',
-                per_page: 100,
-              }
+              { owner, repo, state: 'open', per_page: 100 }
             );
 
             console.log(`Found ${prs.length} open PR(s)`);
 
             // ===== Process PRs =====
             for (const pr of prs) {
-              const prNumber = pr.number;
-              const createdAt = new Date(pr.created_at);
-              const baseBranch = pr.base.ref;
-              const headBranch = pr.head.ref;
-
-              // --- PR skip conditions ---
-              if (createdAt > cutoffTime) {
-                prFailures.push({
-                  pr: prNumber,
-                  reason: 'PR newer than cutoff'
-                });
-                continue;
-              }
-
-              if (!protectedSet.has(baseBranch)) {
-                prFailures.push({
-                  pr: prNumber,
-                  reason: `Base branch "${baseBranch}" is not protected`
-                });
-                continue;
-              }
-
-              // --- Close PR ---
-              try {
-                await github.rest.pulls.update({
-                  owner,
-                  repo,
-                  pull_number: prNumber,
-                  state: 'closed',
-                });
-                prsClosed++;
-                console.log(`Closed PR #${prNumber}`);
-              } catch (err) {
-                prFailures.push({
-                  pr: prNumber,
-                  reason: `Failed to close PR: ${err.message}`
-                });
-                continue;
-              }
-
-              // --- Branch deletion checks ---
-              if (protectedSet.has(headBranch)) {
-                branchFailures.push({
-                  branch: headBranch,
-                  reason: 'Branch is protected'
-                });
-                continue;
-              }
-
-              if (pr.head.repo.fork) {
-                branchFailures.push({
-                  branch: headBranch,
-                  reason: 'Branch belongs to a fork'
-                });
-                continue;
-              }
-
-              try {
-                const branch = await github.rest.repos.getBranch({
-                  owner,
-                  repo,
-                  branch: headBranch,
-                });
-
-                const lastCommitDate = new Date(
-                  branch.data.commit.commit.committer.date
-                );
-
-                if (lastCommitDate > cutoffTime) {
-                  branchFailures.push({
-                    branch: headBranch,
-                    reason: 'Branch has recent commits'
-                  });
-                  continue;
-                }
-
-                await github.rest.git.deleteRef({
-                  owner,
-                  repo,
-                  ref: `heads/${headBranch}`,
-                });
-
-                branchesDeleted++;
-                console.log(`Deleted branch: ${headBranch}`);
-              } catch (err) {
-                branchFailures.push({
-                  branch: headBranch,
-                  reason: err.message
-                });
-              }
-            }
-
-            // ===== Final Summary =====
-            console.log('\n========== CLEANUP SUMMARY ==========');
-            console.log(`PRs closed successfully: ${prsClosed}`);
-            console.log(`Branches deleted successfully: ${branchesDeleted}`);
-
-            if (prFailures.length > 0) {
-              console.log('\nPR closure failures / skips:');
-              prFailures.forEach(f =>
-                console.log(`- PR #${f.pr}: ${f.reason}`)
-              );
-            }
-
-            if (branchFailures.length > 0) {
-              console.log('\nBranch deletion failures / skips:');
-              branchFailures.forEach(f =>
-                console.log(`- ${f.branch}: ${f.reason}`)
-              );
-            }
-
-            console.log('====================================');
-            console.log('Cleanup job completed');
+              const
