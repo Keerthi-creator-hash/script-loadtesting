@@ -1,17 +1,17 @@
 name: Cleanup Old Pull Requests and Branches
 
 on:
-  # Scheduled trigger: Every Sunday at 00:00 UTC
+  # Scheduled trigger (minimum supported by GitHub is every 5 minutes)
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '*/5 * * * *'
 
   # Manual trigger
   workflow_dispatch:
     inputs:
-      cutoffDays:
-        description: 'PR & branch cutoff age in days'
+      cutoffMinutes:
+        description: 'PR & branch cutoff age in minutes'
         required: true
-        default: '90'
+        default: '5'
 
 permissions:
   contents: write
@@ -25,19 +25,19 @@ jobs:
       - name: Scheduled run info
         if: github.event_name == 'schedule'
         run: |
-          echo "Scheduled cleanup run (Sunday)"
+          echo "Scheduled cleanup run"
           echo "Time (UTC): $(date -u)"
 
       - name: Manual run info
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Manual cleanup run"
-          echo "Cutoff days: ${{ github.event.inputs.cutoffDays }}"
+          echo "Cutoff minutes: ${{ github.event.inputs.cutoffMinutes }}"
 
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
-          PR_CUTOFF_DAYS: ${{ github.event.inputs.cutoffDays || '90' }}
+          PR_CUTOFF_MINUTES: ${{ github.event.inputs.cutoffMinutes || '5' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -46,9 +46,9 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS, 10);
+            const cutoffMinutes = parseInt(process.env.PR_CUTOFF_MINUTES, 10);
             const cutoffTime = new Date();
-            cutoffTime.setDate(cutoffTime.getDate() - cutoffDays);
+            cutoffTime.setMinutes(cutoffTime.getMinutes() - cutoffMinutes);
 
             console.log(`Using cutoff time: ${cutoffTime.toISOString()}`);
 
@@ -87,11 +87,13 @@ jobs:
               const baseBranch = pr.base.ref;
               const headBranch = pr.head.ref;
 
+              // Skip new PRs
               if (createdAt > cutoffTime) {
                 prFailures.push({ pr: prNumber, reason: 'PR newer than cutoff' });
                 continue;
               }
 
+              // Only close PRs targeting protected branches
               if (!protectedSet.has(baseBranch)) {
                 prFailures.push({
                   pr: prNumber,
@@ -100,6 +102,7 @@ jobs:
                 continue;
               }
 
+              // Close PR
               try {
                 await github.rest.pulls.update({
                   owner,
@@ -112,11 +115,12 @@ jobs:
               } catch (err) {
                 prFailures.push({
                   pr: prNumber,
-                  reason: err.message
+                  reason: `Failed to close PR: ${err.message}`
                 });
                 continue;
               }
 
+              // Branch deletion guards
               if (protectedSet.has(headBranch)) {
                 branchFailures.push({
                   branch: headBranch,
