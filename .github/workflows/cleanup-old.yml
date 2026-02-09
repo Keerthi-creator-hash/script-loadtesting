@@ -22,21 +22,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Log scheduled runs
       - name: Scheduled run info
         if: github.event_name == 'schedule'
         run: |
-          echo " Scheduled cleanup run (Sunday)"
+          echo "Scheduled cleanup run (Sunday)"
           echo "Time (UTC): $(date -u)"
 
-      # Log manual runs
       - name: Manual run info
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo " Manual cleanup run"
+          echo "Manual cleanup run"
           echo "Cutoff days: ${{ github.event.inputs.cutoffDays }}"
 
-      # Cleanup logic (runs for BOTH triggers)
       - name: Close old PRs and delete branches
         uses: actions/github-script@v7
         env:
@@ -44,13 +41,10 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            console.log(' Cleanup job started at:', new Date().toISOString());
-            console.log('Trigger:', context.eventName);
+            console.log('Cleanup job started at:', new Date().toISOString());
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-
-            const protectedBranches = ['main', 'master', 'develop'];
 
             const cutoffDays = parseInt(process.env.PR_CUTOFF_DAYS, 10);
             const cutoffTime = new Date();
@@ -58,7 +52,15 @@ jobs:
 
             console.log(`Using cutoff time: ${cutoffTime.toISOString()}`);
 
-            const protectedSet = new Set(protectedBranches);
+            // ===== Counters =====
+            let prsClosed = 0;
+            let branchesDeleted = 0;
+
+            const prFailures = [];
+            const branchFailures = [];
+
+            // ===== Protected branches =====
+            const protectedSet = new Set(['main', 'master', 'develop']);
 
             try {
               const protections = await github.paginate(
@@ -66,10 +68,11 @@ jobs:
                 { owner, repo, protected: true }
               );
               protections.forEach(b => protectedSet.add(b.name));
-            } catch {
-              console.log(' Could not fetch protected branches');
+            } catch (e) {
+              console.log('Could not fetch protected branches:', e.message);
             }
 
+            // ===== Fetch open PRs =====
             const prs = await github.paginate(
               github.rest.pulls.list,
               {
@@ -80,31 +83,64 @@ jobs:
               }
             );
 
-            console.log(`Found ${prs.length} open PRs`);
+            console.log(`Found ${prs.length} open PR(s)`);
 
+            // ===== Process PRs =====
             for (const pr of prs) {
+              const prNumber = pr.number;
               const createdAt = new Date(pr.created_at);
               const baseBranch = pr.base.ref;
               const headBranch = pr.head.ref;
 
-              if (
-                createdAt > cutoffTime ||
-                !protectedBranches.includes(baseBranch)
-              ) {
+              // --- PR skip conditions ---
+              if (createdAt > cutoffTime) {
+                prFailures.push({
+                  pr: prNumber,
+                  reason: 'PR newer than cutoff'
+                });
                 continue;
               }
 
-              console.log(`Closing PR #${pr.number}`);
+              if (!protectedSet.has(baseBranch)) {
+                prFailures.push({
+                  pr: prNumber,
+                  reason: `Base branch "${baseBranch}" is not protected`
+                });
+                continue;
+              }
 
-              await github.rest.pulls.update({
-                owner,
-                repo,
-                pull_number: pr.number,
-                state: 'closed',
-              });
+              // --- Close PR ---
+              try {
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                  state: 'closed',
+                });
+                prsClosed++;
+                console.log(`Closed PR #${prNumber}`);
+              } catch (err) {
+                prFailures.push({
+                  pr: prNumber,
+                  reason: `Failed to close PR: ${err.message}`
+                });
+                continue;
+              }
 
+              // --- Branch deletion checks ---
               if (protectedSet.has(headBranch)) {
-                console.log(`Skipping protected branch: ${headBranch}`);
+                branchFailures.push({
+                  branch: headBranch,
+                  reason: 'Branch is protected'
+                });
+                continue;
+              }
+
+              if (pr.head.repo.fork) {
+                branchFailures.push({
+                  branch: headBranch,
+                  reason: 'Branch belongs to a fork'
+                });
                 continue;
               }
 
@@ -120,20 +156,47 @@ jobs:
                 );
 
                 if (lastCommitDate > cutoffTime) {
-                  console.log(`Skipping active branch: ${headBranch}`);
+                  branchFailures.push({
+                    branch: headBranch,
+                    reason: 'Branch has recent commits'
+                  });
                   continue;
                 }
-
-                console.log(`Deleting branch: ${headBranch}`);
 
                 await github.rest.git.deleteRef({
                   owner,
                   repo,
                   ref: `heads/${headBranch}`,
                 });
+
+                branchesDeleted++;
+                console.log(`Deleted branch: ${headBranch}`);
               } catch (err) {
-                console.log(` Could not delete branch ${headBranch}: ${err.message}`);
+                branchFailures.push({
+                  branch: headBranch,
+                  reason: err.message
+                });
               }
             }
 
-            console.log(' Cleanup job completed');
+            // ===== Final Summary =====
+            console.log('\n========== CLEANUP SUMMARY ==========');
+            console.log(`PRs closed successfully: ${prsClosed}`);
+            console.log(`Branches deleted successfully: ${branchesDeleted}`);
+
+            if (prFailures.length > 0) {
+              console.log('\nPR closure failures / skips:');
+              prFailures.forEach(f =>
+                console.log(`- PR #${f.pr}: ${f.reason}`)
+              );
+            }
+
+            if (branchFailures.length > 0) {
+              console.log('\nBranch deletion failures / skips:');
+              branchFailures.forEach(f =>
+                console.log(`- ${f.branch}: ${f.reason}`)
+              );
+            }
+
+            console.log('====================================');
+            console.log('Cleanup job completed');
